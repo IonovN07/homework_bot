@@ -1,8 +1,8 @@
-import requests
 import logging
 import os
-import time
+import requests
 import sys
+import time
 
 from dotenv import load_dotenv
 from telebot import TeleBot
@@ -26,64 +26,64 @@ HOMEWORK_VERDICTS = {
 HOMEWORK_NAME_KEY_ERROR = 'В данных отсутствует ключ "homework_name"'
 UNEXPECTED_STATUS = 'Неожиданный статус домашней работы: "{}"'
 STATUS_CHANGED = 'Изменился статус проверки работы "{}". {}'
+MISSING_TOKENS = 'Отсутствуют переменные окружения: {}'
+REQUEST_ERROR = (
+    'Произошла ошибка запроса: {}.'
+    'Параметры запроса: ENDPOINT={}, HEADERS={}, params={{"from_date": {}}}'
+)
+API_RESPONSE_ERROR = (
+    'Ошибка ответа: {}.'
+    'Параметры запроса: ENDPOINT={}, HEADERS={}, params={{"from_date": {}}}'
+)
+API_DATA_ERROR = 'Ошибка: {}'
+NOT_DICT_ERROR = 'Данные ответа API не являются словарем, тип объекта {}'
+NO_HOMEWORKS_KEY = 'В ответе API отсутствует ключ "homeworks"'
+NOT_LIST_ERROR = (
+    'Данные под ключом "homeworks" не являются списком, тип объекта {}'
+)
+SEND_MESSAGE_SUCCESS = 'Сообщение успешно отправлено: {}'
+SEND_MESSAGE_ERROR = 'Сбой при отправке сообщения: {}, exc_info=True'
+NO_CHANGES = 'Нет изменений в статусе домашней работы'
+PROGRAM_FAILURE = 'Сбой в работе программы: {}'
+
 
 def setup_logger():
+    """Настройка логгера."""
     logging.basicConfig(
         level=logging.DEBUG,
-        format='%(asctime)s, %(levelname)s, %(message)s, %(name)s, %(funcName)s, %(lineno)d',
-        handlers= [
-            logging.StreamHandler(sys.stdout),  
-            logging.FileHandler(f'{__file__}.log')  
+        format=(
+            '%(asctime)s, %(levelname)s, %(message)s,'
+            '%(name)s, %(funcName)s, %(lineno)d'
+        ),
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(f'{__file__}.log')
         ]
     )
+
 
 logger = logging.getLogger(__name__)
 
 
-# def check_tokens():
-#     """Проверка наличия обязательных переменных окружения."""
-#     missing_tokens = []
-#     for name in ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']:
-#         # if globals()[name] is None:  
-#         #     message = f'Отсутствует обязательная переменная окружения: {name}'
-#         #     logger.critical(message)  
-#         #     raise KeyError(message)
-#         try:
-#             if not globals()[name]:
-#                 missing_tokens.append(name)
-#         except KeyError:
-#             missing_tokens.append(name)  # Добавляем ключ в список пропущенных токенов, если его нет в словаре
+def check_tokens():
+    """Проверка наличия обязательных переменных окружения."""
+    missing_tokens = []
+    for name in ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']:
+        if name not in globals() or not globals()[name]:
+            missing_tokens.append(name)
+    if missing_tokens:
+        message = MISSING_TOKENS.format(missing_tokens)
+        logger.critical(message)
+        raise KeyError(message)
 
-#     if missing_tokens:
-#         message = f"Отсутствуют переменные окружения: {missing_tokens}"
-#         logger.critical(message)
-#         raise KeyError(message)
-
-
-def check_tokens(): 
-    """Проверка наличия обязательных переменных окружения.""" 
-    if not all([PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID]): 
-        missing_tokens = [] 
-        if not PRACTICUM_TOKEN: 
-            missing_tokens.append('PRACTICUM_TOKEN') 
-        if not TELEGRAM_TOKEN: 
-            missing_tokens.append('TELEGRAM_TOKEN') 
-        if not TELEGRAM_CHAT_ID: 
-            missing_tokens.append('TELEGRAM_CHAT_ID') 
-        logger.critical( 
-            f"Отсутствуют переменные окружения: {', '.join(missing_tokens)}" 
-        ) 
-        raise ValueError( 
-            f"Отсутствуют переменные окружения: {', '.join(missing_tokens)}"
-        )
 
 def send_message(bot, message):
     """Отправка сообщения ботом."""
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug(f'Сообщение успешно отправлено: {message}')
+        logger.debug(SEND_MESSAGE_SUCCESS.format(message))
     except Exception as error:
-        logger.error(f'Сбой при отправке сообщения: {error}', exc_info=True)
+        logger.error(SEND_MESSAGE_ERROR.format(error))
 
 
 def get_api_answer(timestamp):
@@ -95,46 +95,52 @@ def get_api_answer(timestamp):
             params={'from_date': timestamp}
         )
     except requests.RequestException as request_error:
-        raise requests.RequestException(
-            f'Произошла ошибка запроса: {response.status_code}'
+        raise Exception(
+            REQUEST_ERROR.format(request_error, ENDPOINT, HEADERS, timestamp)
         )
     if response.status_code != requests.codes.ok:
-        raise requests.HTTPError(
-            f'API вернул код состояния: {response.status_code}'
+        raise Exception(
+            API_RESPONSE_ERROR.format(
+                response.status_code, ENDPOINT, HEADERS, timestamp
+            )
         )
-    return response.json()
+    data = response.json()
+    if 'code' in data or 'error' in data:
+        message = API_DATA_ERROR.format(
+            data['code'] if 'code' in data else data['error']
+        )
+        raise Exception(message)
+    return data
 
 
 def check_response(response):
     """Проверка ответа от API."""
-    try:
-        homeworks = response['homeworks']
-    except KeyError:
-        raise KeyError('В ответе API отсутствует ключ "homeworks"')
+    if not isinstance(response, dict):
+        raise TypeError(NOT_DICT_ERROR.format(type(response)))
+    if 'homeworks' not in response:
+        raise KeyError(NO_HOMEWORKS_KEY)
+    homeworks = response['homeworks']
     if not isinstance(homeworks, list):
-        raise TypeError(f'Под ключом "homeworks" объект типа {type(homeworks)}')
-    if not homeworks:
-        next_timestamp = response['current_date']
-        logger.debug('Нет новых статусов')
-        return next_timestamp
-    else:
-        return homeworks[0]
+        raise TypeError(NOT_LIST_ERROR.format(type(homeworks)))
+    return homeworks
 
 
 def parse_status(homework):
     """Парсинг статуса домашней работы."""
+    print(homework)
     if 'homework_name' not in homework:
         raise KeyError(HOMEWORK_NAME_KEY_ERROR)
     name = homework['homework_name']
-    if homework['status'] == 'approved':
-        verdict = HOMEWORK_VERDICTS['approved']
-    elif homework['status'] == 'reviewing':
-        verdict = HOMEWORK_VERDICTS['reviewing']
-    elif homework['status'] == 'rejected':
-        verdict = HOMEWORK_VERDICTS['rejected']
-    else:
-        raise ValueError(UNEXPECTED_STATUS.format(name))
-    return STATUS_CHANGED.format(name=name, verdict=verdict)
+    match homework['status']:
+        case 'approved':
+            verdict = HOMEWORK_VERDICTS['approved']
+        case 'reviewing':
+            verdict = HOMEWORK_VERDICTS['reviewing']
+        case 'rejected':
+            verdict = HOMEWORK_VERDICTS['rejected']
+        case _:
+            raise ValueError(UNEXPECTED_STATUS.format(name))
+    return STATUS_CHANGED.format(name, verdict)
 
 
 def main():
@@ -147,13 +153,14 @@ def main():
     while True:
         try:
             response = get_api_answer(timestamp)
-            checked_response = check_response(response)
-            if isinstance(checked_response, int):
-                timestamp = checked_response
-            send_message(bot, parse_status(checked_response))
-            last_error_message = None
+            homeworks = check_response(response)
+            if homeworks:
+                homework = homeworks[0]
+                send_message(bot, parse_status(homework))
+                last_error_message = None
+            logger.debug(NO_CHANGES)
         except Exception as error:
-            message = f'Сбой в работе программы: {error}'
+            message = PROGRAM_FAILURE.format(error)
             if str(error) != last_error_message:
                 send_message(bot, message)
                 last_error_message = str(error)
