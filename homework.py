@@ -131,16 +131,12 @@ def parse_status(homework):
     if 'homework_name' not in homework:
         raise KeyError(HOMEWORK_NAME_KEY_ERROR)
     name = homework['homework_name']
-    match homework['status']:
-        case 'approved':
-            verdict = HOMEWORK_VERDICTS['approved']
-        case 'reviewing':
-            verdict = HOMEWORK_VERDICTS['reviewing']
-        case 'rejected':
-            verdict = HOMEWORK_VERDICTS['rejected']
-        case _:
-            raise ValueError(UNEXPECTED_STATUS.format(name))
-    return STATUS_CHANGED.format(name, verdict)
+    if homework['status'] in HOMEWORK_VERDICTS:
+        return STATUS_CHANGED.format(
+            name,
+            HOMEWORK_VERDICTS[homework['status']]
+        )
+    raise ValueError(UNEXPECTED_STATUS.format(name))
 
 
 def main():
