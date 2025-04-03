@@ -35,7 +35,7 @@ API_RESPONSE_ERROR = (
     'Ошибка ответа: {}.'
     'Параметры запроса: ENDPOINT={}, HEADERS={}, params={{"from_date": {}}}'
 )
-API_DATA_ERROR = 'Ошибка: {}'
+API_DATA_ERROR = 'Ошибка ответа API: {}'
 NOT_DICT_ERROR = 'Данные ответа API не являются словарем, тип объекта {}'
 NO_HOMEWORKS_KEY = 'В ответе API отсутствует ключ "homeworks"'
 NOT_LIST_ERROR = (
