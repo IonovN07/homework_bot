@@ -1,11 +1,11 @@
 import logging
 import os
-import requests
 import sys
 import time
 
 from dotenv import load_dotenv
 from telebot import TeleBot
+import requests
 
 load_dotenv()
 
@@ -24,18 +24,21 @@ HOMEWORK_VERDICTS = {
 }
 
 HOMEWORK_NAME_KEY_ERROR = 'В данных отсутствует ключ "homework_name"'
-UNEXPECTED_STATUS = 'Неожиданный статус домашней работы: "{}"'
+UNEXPECTED_STATUS = ('Неожиданный статус домашней работы: "{}"')
 STATUS_CHANGED = 'Изменился статус проверки работы "{}". {}'
 MISSING_TOKENS = 'Отсутствуют переменные окружения: {}'
 REQUEST_ERROR = (
-    'Произошла ошибка запроса: {}.'
-    'Параметры запроса: ENDPOINT={}, HEADERS={}, params={{"from_date": {}}}'
+    'Произошла ошибка запроса: {}. '
+    'Параметры запроса: ENDPOINT={}, HEADERS={}, params={}'
 )
 API_RESPONSE_ERROR = (
     'Ошибка ответа: {}.'
-    'Параметры запроса: ENDPOINT={}, HEADERS={}, params={{"from_date": {}}}'
+    'Параметры запроса: ENDPOINT={}, HEADERS={}, params={}'
 )
-API_DATA_ERROR = 'Ошибка ответа API: {}'
+API_DATA_ERROR = (
+    'Ключ ответ API: "{}", Значение: {}. '
+    'Параметры запроса:  ENDPOINT={}, HEADERS={}, params={}. '
+)
 NOT_DICT_ERROR = 'Данные ответа API не являются словарем, тип объекта {}'
 NO_HOMEWORKS_KEY = 'В ответе API отсутствует ключ "homeworks"'
 NOT_LIST_ERROR = (
@@ -46,35 +49,34 @@ SEND_MESSAGE_ERROR = 'Сбой при отправке сообщения: {}, e
 NO_CHANGES = 'Нет изменений в статусе домашней работы'
 PROGRAM_FAILURE = 'Сбой в работе программы: {}'
 
-
-def setup_logger():
-    """Настройка логгера."""
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format=(
-            '%(asctime)s, %(levelname)s, %(message)s,'
-            '%(name)s, %(funcName)s, %(lineno)d'
-        ),
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler(f'{__file__}.log')
-        ]
-    )
-
+tokens = ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']
 
 logger = logging.getLogger(__name__)
 
 
+class MissingEnvironmentVariable(Exception):
+    """Пользовательское исключение для проверки переменных окружения."""
+
+    pass
+
+
+class HttpError(Exception):
+
+    """Пользовательское исключение для ошибок HTTP"""
+
+    pass
+
+
 def check_tokens():
     """Проверка наличия обязательных переменных окружения."""
-    missing_tokens = []
-    for name in ['PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID']:
-        if name not in globals() or not globals()[name]:
-            missing_tokens.append(name)
+    missing_tokens = [
+        name for name in tokens if
+        name not in globals() or not globals()[name]
+    ]
     if missing_tokens:
         message = MISSING_TOKENS.format(missing_tokens)
         logger.critical(message)
-        raise KeyError(message)
+        raise MissingEnvironmentVariable(message)
 
 
 def send_message(bot, message):
@@ -82,8 +84,10 @@ def send_message(bot, message):
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logger.debug(SEND_MESSAGE_SUCCESS.format(message))
+        return True
     except Exception as error:
         logger.error(SEND_MESSAGE_ERROR.format(error))
+        return False
 
 
 def get_api_answer(timestamp):
@@ -95,21 +99,32 @@ def get_api_answer(timestamp):
             params={'from_date': timestamp}
         )
     except requests.RequestException as request_error:
-        raise Exception(
-            REQUEST_ERROR.format(request_error, ENDPOINT, HEADERS, timestamp)
+        raise ConnectionError(
+            REQUEST_ERROR.format(
+                request_error, ENDPOINT, HEADERS, {'from_date': timestamp}
+            )
         )
     if response.status_code != requests.codes.ok:
-        raise Exception(
+        raise HttpError(
             API_RESPONSE_ERROR.format(
-                response.status_code, ENDPOINT, HEADERS, timestamp
+                response.status_code,
+                ENDPOINT,
+                HEADERS,
+                {'from_date': timestamp}
             )
         )
     data = response.json()
     if 'code' in data or 'error' in data:
-        message = API_DATA_ERROR.format(
-            data['code'] if 'code' in data else data['error']
+        error_key = 'code' if 'code' in data else 'error'
+        raise ValueError(
+            API_DATA_ERROR.format(
+                error_key,
+                data[error_key],
+                ENDPOINT,
+                HEADERS,
+                {'from_date': timestamp}
+            )
         )
-        raise Exception(message)
     return data
 
 
@@ -127,21 +142,28 @@ def check_response(response):
 
 def parse_status(homework):
     """Парсинг статуса домашней работы."""
-    print(homework)
     if 'homework_name' not in homework:
         raise KeyError(HOMEWORK_NAME_KEY_ERROR)
     name = homework['homework_name']
-    if homework['status'] in HOMEWORK_VERDICTS:
-        return STATUS_CHANGED.format(
-            name,
-            HOMEWORK_VERDICTS[homework['status']]
-        )
-    raise ValueError(UNEXPECTED_STATUS.format(name))
+    status = homework['status']
+    if status in HOMEWORK_VERDICTS:
+        return STATUS_CHANGED.format(name, HOMEWORK_VERDICTS[status])
+    raise ValueError(UNEXPECTED_STATUS.format(status))
 
 
 def main():
     """Основная логика работы бота."""
-    setup_logger()
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format=(
+            '%(asctime)s, %(levelname)s, %(message)s,'
+            '%(name)s, %(funcName)s, %(lineno)d'
+        ),
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler(f'{__file__}.log')
+        ]
+    )
     check_tokens()
     bot = TeleBot(TELEGRAM_TOKEN)
     timestamp = int(time.time())
@@ -149,18 +171,18 @@ def main():
     while True:
         try:
             response = get_api_answer(timestamp)
+            timestamp = response['current_date']
             homeworks = check_response(response)
             if homeworks:
-                homework = homeworks[0]
-                send_message(bot, parse_status(homework))
-                last_error_message = None
+                if send_message(bot, parse_status(homeworks[0])):
+                    last_error_message = None
             logger.debug(NO_CHANGES)
         except Exception as error:
             message = PROGRAM_FAILURE.format(error)
-            if str(error) != last_error_message:
-                send_message(bot, message)
-                last_error_message = str(error)
-            logger.error(message)
+            if message != last_error_message:
+                logger.error(message)
+                if send_message(bot, message):
+                    last_error_message = message
         time.sleep(RETRY_PERIOD)
 
 
