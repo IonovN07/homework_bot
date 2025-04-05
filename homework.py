@@ -61,8 +61,7 @@ class MissingEnvironmentVariable(Exception):
 
 
 class HttpError(Exception):
-
-    """Пользовательское исключение для ошибок HTTP"""
+    """Пользовательское исключение для ошибок HTTP."""
 
     pass
 
